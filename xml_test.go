@@ -18,8 +18,8 @@ const testInput = `
   "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <body xmlns:foo="ns1" xmlns="ns2" xmlns:tag="ns3" ` +
 	"\r\n\t" + `  >
-  <hello lang="en">World &lt;&gt;&apos;&quot; &#x767d;&#40300;翔</hello>
-  <query>&何; &is-it;</query>
+  <hello xml:lang="en" k="v">World &lt;&gt;&apos;&quot; &#x767d;&#40300;翔</hello>
+  <foo:query k="v">&何; &is-it;</foo:query>
   <goodbye />
   <outer foo:attr="value" xmlns:tag="ns4">
     <inner/>
@@ -40,13 +40,13 @@ var rawTokens = []Token{
 	CharData("\n"),
 	StartElement{Name{"", "body"}, []Attr{{Name{"xmlns", "foo"}, "ns1"}, {Name{"", "xmlns"}, "ns2"}, {Name{"xmlns", "tag"}, "ns3"}}},
 	CharData("\n  "),
-	StartElement{Name{"", "hello"}, []Attr{{Name{"", "lang"}, "en"}}},
+	StartElement{Name{"", "hello"}, []Attr{{Name{"xml", "lang"}, "en"}, {Name{"", "k"}, "v"}}},
 	CharData("World <>'\" 白鵬翔"),
 	EndElement{Name{"", "hello"}},
 	CharData("\n  "),
-	StartElement{Name{"", "query"}, []Attr{}},
+	StartElement{Name{"foo", "query"}, []Attr{{Name{"", "k"}, "v"}}},
 	CharData("What is it?"),
-	EndElement{Name{"", "query"}},
+	EndElement{Name{"foo", "query"}},
 	CharData("\n  "),
 	StartElement{Name{"", "goodbye"}, []Attr{}},
 	EndElement{Name{"", "goodbye"}},
@@ -77,13 +77,13 @@ var cookedTokens = []Token{
 	CharData("\n"),
 	StartElement{Name{"ns2", "body"}, []Attr{{Name{"xmlns", "foo"}, "ns1"}, {Name{"", "xmlns"}, "ns2"}, {Name{"xmlns", "tag"}, "ns3"}}},
 	CharData("\n  "),
-	StartElement{Name{"ns2", "hello"}, []Attr{{Name{"", "lang"}, "en"}}},
+	StartElement{Name{"ns2", "hello"}, []Attr{{Name{"http://www.w3.org/XML/1998/namespace", "lang"}, "en"}, {Name{"", "k"}, "v"}}},
 	CharData("World <>'\" 白鵬翔"),
 	EndElement{Name{"ns2", "hello"}},
 	CharData("\n  "),
-	StartElement{Name{"ns2", "query"}, []Attr{}},
+	StartElement{Name{"ns1", "query"}, []Attr{{Name{"", "k"}, "v"}}},
 	CharData("What is it?"),
-	EndElement{Name{"ns2", "query"}},
+	EndElement{Name{"ns1", "query"}},
 	CharData("\n  "),
 	StartElement{Name{"ns2", "goodbye"}, []Attr{}},
 	EndElement{Name{"ns2", "goodbye"}},

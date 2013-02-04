@@ -80,6 +80,7 @@ not being used from outside intra_region_diff.py.
 
 type Feed struct {
 	XMLName Name      `xml:"http://www.w3.org/2005/Atom feed"`
+	Lang    string    `xml:"http://www.w3.org/XML/1998/namespace lang,attr"`
 	Title   string    `xml:"title"`
 	Id      string    `xml:"id"`
 	Link    []Link    `xml:"link"`
@@ -116,6 +117,7 @@ type Text struct {
 
 var atomFeed = Feed{
 	XMLName: Name{"http://www.w3.org/2005/Atom", "feed"},
+	Lang:    "en-us",
 	Title:   "Code Review - My issues",
 	Link: []Link{
 		{Rel: "alternate", Href: "http://codereview.appspot.com/"},

@@ -191,6 +191,8 @@ func NewDecoder(r io.Reader) *Decoder {
 		line:     1,
 		Strict:   true,
 	}
+	d.ns["xml"] = XML_NS
+	d.ns["xmlns"] = XMLNS_NS
 	d.switchToReader(r)
 	return d
 }
@@ -276,8 +278,6 @@ func (d *Decoder) translate(n *Name, isElementName bool) {
 	case n.Space == "xmlns":
 		return
 	case n.Space == "" && !isElementName:
-		return
-	case n.Space == "" && n.Local == "xmlns":
 		return
 	}
 	if v, ok := d.ns[n.Space]; ok {

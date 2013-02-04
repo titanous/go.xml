@@ -90,12 +90,13 @@ func MarshalIndent(v interface{}, prefix, indent string) ([]byte, error) {
 
 // An Encoder writes XML data to an output stream.
 type Encoder struct {
+	context *context
 	printer
 }
 
 // NewEncoder returns a new encoder that writes to w.
 func NewEncoder(w io.Writer) *Encoder {
-	return &Encoder{printer{Writer: bufio.NewWriter(w)}}
+	return &Encoder{rootNs2Pfx(), printer{Writer: bufio.NewWriter(w)}}
 }
 
 // Indent sets the encoder to generate XML in which each element
@@ -111,7 +112,7 @@ func (enc *Encoder) Indent(prefix, indent string) {
 // See the documentation for Marshal for details about the conversion
 // of Go values to XML.
 func (enc *Encoder) Encode(v interface{}) error {
-	err := enc.marshalValue(reflect.ValueOf(v), nil)
+	err := enc.marshalValue(reflect.ValueOf(v), nil, enc.context.child())
 	if err != nil {
 		return err
 	}
@@ -129,7 +130,8 @@ type printer struct {
 
 // marshalValue writes one or more XML elements representing val.
 // If val was obtained from a struct field, finfo must have its details.
-func (p *printer) marshalValue(val reflect.Value, finfo *fieldInfo) error {
+// nsctx is a namespace-to-prefix mapping to use.
+func (p *printer) marshalValue(val reflect.Value, finfo *fieldInfo, nsctx *context) error {
 	if !val.IsValid() {
 		return nil
 	}
@@ -145,20 +147,24 @@ func (p *printer) marshalValue(val reflect.Value, finfo *fieldInfo) error {
 		if val.IsNil() {
 			return nil
 		}
-		return p.marshalValue(val.Elem(), finfo)
+		return p.marshalValue(val.Elem(), finfo, nsctx)
 	}
 
 	// Slices and arrays iterate over the elements. They do not have an enclosing tag.
 	if (kind == reflect.Slice || kind == reflect.Array) && typ.Elem().Kind() != reflect.Uint8 {
 		for i, n := 0, val.Len(); i < n; i++ {
-			if err := p.marshalValue(val.Index(i), finfo); err != nil {
+			if err := p.marshalValue(val.Index(i), finfo, nsctx.child()); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 
-	tinfo, err := getTypeInfo(typ)
+	if finfo != nil {
+		nsctx.xmlns = finfo.xmlns
+	}
+
+	tinfo, err := getTypeInfo(typ, nsctx.xmlns)
 	if err != nil {
 		return err
 	}
@@ -167,17 +173,20 @@ func (p *printer) marshalValue(val reflect.Value, finfo *fieldInfo) error {
 	// 1. XMLName field in underlying struct;
 	// 2. field name/tag in the struct field; and
 	// 3. type name
-	var xmlns, name string
+	var pfx, name string
 	if tinfo.xmlname != nil {
+		// BUG(cjyar): It's not possible to specify a
+		// prefix-to-namespace mapping at runtime, via the
+		// xml.Name structure.
 		xmlname := tinfo.xmlname
 		if xmlname.name != "" {
-			xmlns, name = xmlname.xmlns, xmlname.name
+			nsctx.xmlns, name = xmlname.xmlns, xmlname.name
 		} else if v, ok := xmlname.value(val).Interface().(Name); ok && v.Local != "" {
-			xmlns, name = v.Space, v.Local
+			nsctx.xmlns, name = v.Space, v.Local
 		}
 	}
 	if name == "" && finfo != nil {
-		xmlns, name = finfo.xmlns, finfo.name
+		pfx, name = finfo.prefix, finfo.name
 	}
 	if name == "" {
 		name = typ.Name()
@@ -186,29 +195,76 @@ func (p *printer) marshalValue(val reflect.Value, finfo *fieldInfo) error {
 		}
 	}
 
+	// Write the name. Cases to handle:
+	// - Simple name, no namespace or prefix.
+	// - Name with namespace, no prefix, no mapping for namespace.
+	// - Name with namespace, no prefix, but we have a ns->pfx mapping.
+	// - Name with namespace and prefix.
+
+	mapPfx, isMapped := nsctx.Get(nsctx.xmlns)
 	p.writeIndent(1)
 	p.WriteByte('<')
+	if pfx != "" {
+		p.WriteString(pfx)
+		p.WriteByte(':')
+	} else if mapPfx != "" {
+		p.WriteString(mapPfx)
+		p.WriteByte(':')
+	}
 	p.WriteString(name)
 
-	if xmlns != "" {
-		p.WriteString(` xmlns="`)
+	if nsctx.xmlns != "" && !isMapped {
+		nsctx.pfxmap[nsctx.xmlns] = pfx
+		p.WriteString(" xmlns")
+		if pfx != "" {
+			p.WriteByte(':')
+			p.WriteString(pfx)
+		}
+		p.WriteString(`="`)
 		// TODO: EscapeString, to avoid the allocation.
-		Escape(p, []byte(xmlns))
+		Escape(p, []byte(nsctx.xmlns))
 		p.WriteByte('"')
 	}
 
-	// Attributes
-	for i := range tinfo.fields {
-		finfo := &tinfo.fields[i]
-		if finfo.flags&fAttr == 0 {
+	// Scan attributes for new namespaces before outputting the attributes.
+	for _, attrInfo := range tinfo.fields {
+		if attrInfo.flags&fAttr == 0 {
 			continue
 		}
-		fv := finfo.value(val)
-		if finfo.flags&fOmitEmpty != 0 && isEmptyValue(fv) {
+		fv := attrInfo.value(val)
+		if attrInfo.flags&fOmitEmpty != 0 && isEmptyValue(fv) {
+			continue
+		}
+		_, attrIsMapped := nsctx.Get(attrInfo.xmlns)
+		if attrInfo.xmlns != "" && !attrIsMapped {
+			if attrInfo.prefix == "" {
+				return fmt.Errorf("Attribute %s of %s needs a prefix", attrInfo.name, name)
+			}
+			nsctx.pfxmap[attrInfo.xmlns] = attrInfo.prefix
+			p.WriteString(" xmlns:")
+			p.WriteString(attrInfo.prefix)
+			p.WriteString(`="`)
+			Escape(p, []byte(attrInfo.xmlns))
+			p.WriteByte('"')
+		}
+	}
+
+	// Attributes
+	for _, attrInfo := range tinfo.fields {
+		if attrInfo.flags&fAttr == 0 {
+			continue
+		}
+		fv := attrInfo.value(val)
+		if attrInfo.flags&fOmitEmpty != 0 && isEmptyValue(fv) {
 			continue
 		}
 		p.WriteByte(' ')
-		p.WriteString(finfo.name)
+		prefix, _ := nsctx.Get(attrInfo.xmlns)
+		if prefix != "" {
+			p.WriteString(prefix)
+			p.WriteByte(':')
+		}
+		p.WriteString(attrInfo.name)
 		p.WriteString(`="`)
 		if err := p.marshalSimple(fv.Type(), fv); err != nil {
 			return err
@@ -218,7 +274,7 @@ func (p *printer) marshalValue(val reflect.Value, finfo *fieldInfo) error {
 	p.WriteByte('>')
 
 	if val.Kind() == reflect.Struct {
-		err = p.marshalStruct(tinfo, val)
+		err = p.marshalStruct(tinfo, val, nsctx)
 	} else {
 		err = p.marshalSimple(typ, val)
 	}
@@ -229,6 +285,13 @@ func (p *printer) marshalValue(val reflect.Value, finfo *fieldInfo) error {
 	p.writeIndent(-1)
 	p.WriteByte('<')
 	p.WriteByte('/')
+	if pfx != "" {
+		p.WriteString(pfx)
+		p.WriteByte(':')
+	} else if mapPfx != "" {
+		p.WriteString(mapPfx)
+		p.WriteByte(':')
+	}
 	p.WriteString(name)
 	p.WriteByte('>')
 
@@ -273,7 +336,7 @@ func (p *printer) marshalSimple(typ reflect.Type, val reflect.Value) error {
 
 var ddBytes = []byte("--")
 
-func (p *printer) marshalStruct(tinfo *typeInfo, val reflect.Value) error {
+func (p *printer) marshalStruct(tinfo *typeInfo, val reflect.Value, nsctx *context) error {
 	if val.Type() == timeType {
 		_, err := p.WriteString(val.Interface().(time.Time).Format(time.RFC3339Nano))
 		return err
@@ -369,7 +432,7 @@ func (p *printer) marshalStruct(tinfo *typeInfo, val reflect.Value) error {
 				}
 			}
 		}
-		if err := p.marshalValue(vf, finfo); err != nil {
+		if err := p.marshalValue(vf, finfo, nsctx.child()); err != nil {
 			return err
 		}
 	}

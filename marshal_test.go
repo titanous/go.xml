@@ -266,6 +266,25 @@ type Plain struct {
 	V interface{}
 }
 
+type NsRoot struct {
+	HTable HtmlTable `xml:"h=http://www.w3.org/TR/html4/ table"`
+	FTable FurnTable `xml:"http://www.w3schools.com/furniture table"`
+}
+
+type HtmlTable struct {
+	Rows []HtmlTr `xml:"tr"`
+}
+
+type HtmlTr struct {
+	Td []string `xml:"td"`
+}
+
+type FurnTable struct {
+	Name   string `xml:"name"`
+	Width  int    `xml:"width"`
+	Length int    `xml:"length"`
+}
+
 // Unless explicitly stated as such (or *Plain), all of the
 // tests below are two-way tests. When introducing new tests,
 // please try to make them two-way as well to ensure that
@@ -275,6 +294,7 @@ var marshalTests = []struct {
 	ExpectXML     string
 	MarshalOnly   bool
 	UnmarshalOnly bool
+	Namespaces    map[string]string
 }{
 	// Test nil marshals to nothing
 	{Value: nil, ExpectXML: ``, MarshalOnly: true},
@@ -768,6 +788,56 @@ var marshalTests = []struct {
 		UnmarshalOnly: true,
 	},
 
+	// Test XML namespaces.
+	{
+		ExpectXML: `<a><nested><value>dquote: &#34;; squote: &#39;; ampersand: &amp;; less: &lt;; greater: &gt;;</value></nested><empty></empty></a>`,
+		Value: &AnyTest{
+			Nested:   `dquote: "; squote: '; ampersand: &; less: <; greater: >;`,
+			AnyField: AnyHolder{XMLName: Name{Local: "empty"}},
+		},
+	},
+	{
+		ExpectXML: `<NsRoot>` +
+			`<h:table xmlns:h="http://www.w3.org/TR/html4/">` +
+			`<h:tr>` +
+			`<h:td>Apples</h:td>` +
+			`<h:td>Bananas</h:td>` +
+			`</h:tr>` +
+			`</h:table>` +
+			`<table xmlns="http://www.w3schools.com/furniture">` +
+			`<name>African Coffee Table</name>` +
+			`<width>80</width>` +
+			`<length>120</length>` +
+			`</table>` +
+			`</NsRoot>`,
+		Value: &NsRoot{HTable: HtmlTable{Rows: []HtmlTr{HtmlTr{Td: []string{"Apples", "Bananas"}}}},
+			FTable: FurnTable{Name: "African Coffee Table",
+				Width: 80, Length: 120},
+		},
+	},
+	{
+		ExpectXML: `<NsRoot>` +
+			`<h:table>` +
+			`<h:tr>` +
+			`<h:td>Apples</h:td>` +
+			`<h:td>Bananas</h:td>` +
+			`</h:tr>` +
+			`</h:table>` +
+			`<f:table>` +
+			`<f:name>African Coffee Table</f:name>` +
+			`<f:width>80</f:width>` +
+			`<f:length>120</f:length>` +
+			`</f:table>` +
+			`</NsRoot>`,
+		Value: &NsRoot{HTable: HtmlTable{Rows: []HtmlTr{HtmlTr{Td: []string{"Apples", "Bananas"}}}},
+			FTable: FurnTable{Name: "African Coffee Table",
+				Width: 80, Length: 120},
+		},
+		Namespaces: map[string]string{"h": "http://www.w3.org/TR/html4/",
+			"f": "http://www.w3schools.com/furniture"},
+		UnmarshalOnly: true,
+	},
+
 	// Test escaping.
 	{
 		ExpectXML: `<a><nested><value>dquote: &#34;; squote: &#39;; ampersand: &amp;; less: &lt;; greater: &gt;;</value></nested><empty></empty></a>`,
@@ -797,7 +867,9 @@ func TestMarshal(t *testing.T) {
 		if test.UnmarshalOnly {
 			continue
 		}
-		data, err := Marshal(test.Value)
+		var data []byte
+		var err error
+		data, err = Marshal(test.Value)
 		if err != nil {
 			t.Errorf("#%d: Error: %s", idx, err)
 			continue
@@ -885,7 +957,23 @@ func TestUnmarshal(t *testing.T) {
 
 		vt := reflect.TypeOf(test.Value)
 		dest := reflect.New(vt.Elem()).Interface()
-		err := Unmarshal([]byte(test.ExpectXML), dest)
+		var err error
+		if test.Namespaces == nil {
+			err = Unmarshal([]byte(test.ExpectXML), dest)
+		} else {
+			// Feed the xmlns mappings to our decoder, and
+			// put dest in a nested struct.
+			nshdr := "<a"
+			for pfx, uri := range test.Namespaces {
+				nshdr += fmt.Sprintf(` xmlns:%s="%s"`, pfx, uri)
+			}
+			nshdr += ">"
+			nsstart := strings.NewReader(nshdr)
+			buf := bytes.NewBuffer([]byte(test.ExpectXML))
+			dec := NewDecoder(io.MultiReader(nsstart, buf))
+			dec.Token()
+			err = dec.Decode(dest)
+		}
 
 		switch fix := dest.(type) {
 		case *Feed:

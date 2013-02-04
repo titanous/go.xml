@@ -8,6 +8,7 @@ import "time"
 
 var atomValue = &Feed{
 	XMLName: Name{"http://www.w3.org/2005/Atom", "feed"},
+	Lang:    "en",
 	Title:   "Example Feed",
 	Link:    []Link{{Href: "http://example.org/"}},
 	Updated: ParseTime("2003-12-13T18:30:02Z"),
@@ -26,7 +27,7 @@ var atomValue = &Feed{
 }
 
 var atomXml = `` +
-	`<feed xmlns="http://www.w3.org/2005/Atom" updated="2003-12-13T18:30:02Z">` +
+	`<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="en" updated="2003-12-13T18:30:02Z">` +
 	`<title>Example Feed</title>` +
 	`<id>urn:uuid:60a76c80-d399-11d9-b93C-0003939e0af6</id>` +
 	`<link href="http://example.org/"></link>` +

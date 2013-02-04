@@ -228,7 +228,7 @@ func (p *Decoder) unmarshal(val reflect.Value, start *StartElement) error {
 		}
 
 		sv = v
-		tinfo, err = getTypeInfo(typ)
+		tinfo, err = getTypeInfo(typ, start.Name.Space)
 		if err != nil {
 			return err
 		}
@@ -239,7 +239,7 @@ func (p *Decoder) unmarshal(val reflect.Value, start *StartElement) error {
 			if finfo.name != "" && finfo.name != start.Name.Local {
 				return UnmarshalError("expected element type <" + finfo.name + "> but have <" + start.Name.Local + ">")
 			}
-			if finfo.xmlns != "" && finfo.xmlns != start.Name.Space {
+			if finfo.name != "" && finfo.xmlns != "" && finfo.xmlns != start.Name.Space {
 				e := "expected element <" + finfo.name + "> in name space " + finfo.xmlns + " but have "
 				if start.Name.Space == "" {
 					e += "no name space"
@@ -263,7 +263,7 @@ func (p *Decoder) unmarshal(val reflect.Value, start *StartElement) error {
 				strv := finfo.value(sv)
 				// Look for attribute.
 				for _, a := range start.Attr {
-					if a.Name.Local == finfo.name {
+					if a.Name.Local == finfo.name && a.Name.Space == finfo.xmlns {
 						copyValue(strv, []byte(a.Value))
 						break
 					}
@@ -449,7 +449,7 @@ Loop:
 				continue Loop
 			}
 		}
-		if len(finfo.parents) == len(parents) && finfo.name == start.Name.Local {
+		if len(finfo.parents) == len(parents) && finfo.name == start.Name.Local && finfo.xmlns == start.Name.Space {
 			// It's a perfect match, unmarshal the field.
 			return true, p.unmarshal(finfo.value(sv), start)
 		}
